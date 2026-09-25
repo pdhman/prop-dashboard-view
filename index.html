@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Prop 운용 대시보드</title>
+<link rel="stylesheet" href="dashboard.css">
+<style>
+  /* ── 비밀번호 게이트 ── */
+  #gate {
+    position: fixed; inset: 0; z-index: 50; display: flex;
+    align-items: center; justify-content: center; padding: 20px; background: var(--page);
+  }
+  #gate .box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px 26px; width: 100%; max-width: 360px; text-align: center;
+  }
+  #gate h1 { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  #gate p.hint { font-size: 12.5px; color: var(--muted); margin-bottom: 18px; }
+  #gate input[type=password] {
+    width: 100%; background: var(--page); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 11px 13px; font-size: 15px; margin-bottom: 10px;
+  }
+  #gate input[type=password]:focus { outline: 2px solid var(--s1); outline-offset: -1px; }
+  #gate button {
+    width: 100%; border: 1px solid var(--s1); background: var(--s1); color: #fff;
+    border-radius: 10px; padding: 11px; font-size: 14.5px; font-weight: 600; cursor: pointer;
+  }
+  #gate button:disabled { opacity: .55; cursor: not-allowed; }
+  #gate .remember {
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    font-size: 12.5px; color: var(--ink2); margin: 12px 0 2px;
+  }
+  #gate .err { color: var(--up-text); font-size: 12.5px; font-weight: 600; margin-top: 12px; min-height: 1.2em; }
+  #app { display: none; }
+  #app.on { display: block; }
+  .stamp { color: var(--muted); font-size: 11.5px; }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <h1>Prop 운용 대시보드</h1>
+    <p class="hint">비밀번호를 입력하면 데이터가 복호화됩니다.</p>
+    <form id="gateForm">
+      <input type="password" id="pw" placeholder="비밀번호" autocomplete="current-password" autofocus>
+      <button type="submit" id="goBtn">열기</button>
+      <label class="remember">
+        <input type="checkbox" id="remember"> 이 기기에서 기억
+      </label>
+    </form>
+    <p class="err" id="gateErr"></p>
+  </div>
+</div>
+
+<div id="app">
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <h1>Prop 운용 대시보드</h1>
+        <p class="sub" id="headSub"></p>
+      </div>
+      <div class="topBtns" data-noexport>
+        <button id="themeBtn" type="button">테마 전환</button>
+      </div>
+    </header>
+
+    <section class="kpis" id="kpis"></section>
+
+    <section class="card">
+      <div class="cardHead">
+        <div>
+          <h2>누적 수익률 추이</h2>
+          <p class="sub">운용 시작일 이후 누적 수익률 (%) · 매일 기록이 쌓이면 선이 이어집니다</p>
+        </div>
+        <div class="legend" id="trendLegend"></div>
+      </div>
+      <div class="chart" id="trendChart"></div>
+      <details class="rawTable">
+        <summary>일별 기록 표 보기</summary>
+        <div id="trendTable"></div>
+      </details>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <div class="cardHead">
+          <div>
+            <h2>종목별 누적 수익률</h2>
+            <p class="sub">평균단가 대비 (%)</p>
+          </div>
+          <div class="legend pfLegend"></div>
+        </div>
+        <div class="chart" id="retChart"></div>
+      </section>
+      <section class="card">
+        <div class="cardHead">
+          <div>
+            <h2>금일 수익률 변화</h2>
+            <p class="sub">전일 대비 (%p)</p>
+          </div>
+          <div class="legend pfLegend"></div>
+        </div>
+        <div class="chart" id="chgChart"></div>
+      </section>
+    </div>
+
+    <div class="grid2" id="compRowWrap"></div>
+
+    <div id="tables"></div>
+
+    <p class="foot" id="footNote"></p>
+
+    <div class="exportBar" data-noexport>
+      <button id="pngBtn" type="button">이미지 저장</button>
+    </div>
+  </div>
+  <div id="tip"></div>
+</div>
+
+<script src="dashboard.js"></script>
+<script>
+(function () {
+  "use strict";
+  var KEY = "prop-view-pw";
+  var gate = document.getElementById("gate");
+  var form = document.getElementById("gateForm");
+  var pwIn = document.getElementById("pw");
+  var goBtn = document.getElementById("goBtn");
+  var errEl = document.getElementById("gateErr");
+  var app = document.getElementById("app");
+  var encPromise = null;
+
+  function b64bytes(s) {
+    var bin = atob(s), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return a;
+  }
+
+  function loadEnc() {
+    if (!encPromise) {
+      encPromise = fetch("data.enc?t=" + Date.now(), { cache: "no-store" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("데이터 파일을 불러오지 못했습니다 (" + r.status + ")");
+          return r.json();
+        });
+    }
+    return encPromise;
+  }
+
+  function decrypt(pw) {
+    return loadEnc().then(function (enc) {
+      var encoder = new TextEncoder();
+      return crypto.subtle
+        .importKey("raw", encoder.encode(pw), "PBKDF2", false, ["deriveKey"])
+        .then(function (base) {
+          return crypto.subtle.deriveKey(
+            { name: "PBKDF2", salt: b64bytes(enc.salt), iterations: enc.iter, hash: "SHA-256" },
+            base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+          );
+        })
+        .then(function (key) {
+          return crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: b64bytes(enc.iv) }, key, b64bytes(enc.ct)
+          );
+        })
+        .then(function (buf) {
+          return { data: JSON.parse(new TextDecoder().decode(buf)), updated: enc.updated };
+        });
+    });
+  }
+
+  function show(result) {
+    gate.style.display = "none";
+    app.classList.add("on");
+    var stamp = result.updated
+      ? "마지막 갱신 " + new Date(result.updated).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })
+      : "";
+    window.renderDashboard(result.data, { footNote: stamp || "자동 갱신 대시보드" });
+  }
+
+  function attempt(pw, remember, fromStorage) {
+    errEl.textContent = "";
+    goBtn.disabled = true;
+    goBtn.textContent = "여는 중…";
+    return decrypt(pw)
+      .then(function (result) {
+        if (remember) { try { localStorage.setItem(KEY, pw); } catch (e) {} }
+        show(result);
+      })
+      .catch(function (e) {
+        goBtn.disabled = false;
+        goBtn.textContent = "열기";
+        if (fromStorage) {
+          try { localStorage.removeItem(KEY); } catch (e2) {}
+          return; // 저장된 비밀번호가 틀린 경우 조용히 입력창을 띄운다
+        }
+        // 복호화 실패는 대부분 비밀번호 오류(OperationError)
+        errEl.textContent = (e && e.name === "OperationError")
+          ? "비밀번호가 맞지 않습니다."
+          : (e && e.message) || "열지 못했습니다.";
+        pwIn.select();
+      });
+  }
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var pw = pwIn.value;
+    if (!pw) return;
+    attempt(pw, document.getElementById("remember").checked, false);
+  });
+
+  if (!window.isSecureContext) {
+    errEl.textContent = "HTTPS에서만 복호화할 수 있습니다.";
+  } else {
+    var saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+    if (saved) {
+      document.getElementById("remember").checked = true;
+      attempt(saved, false, true);
+    }
+  }
+})();
+</script>
+</body>
+</html>
